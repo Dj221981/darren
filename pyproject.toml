@@ -16,6 +16,12 @@ dependencies = [
 [project.scripts]
 cybersec = "cybersec_toolkit.main:main"
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["cybersec_toolkit*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
