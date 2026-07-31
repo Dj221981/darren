@@ -65,6 +65,7 @@ def get_ssl_certificate_info(hostname: str, port: int = 443, timeout: float = 5.
 
     try:
         context = ssl.create_default_context()
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         with socket.create_connection((hostname, port), timeout=timeout) as raw_sock:
             with context.wrap_socket(raw_sock, server_hostname=hostname) as ssl_sock:
                 cert = ssl_sock.getpeercert()
