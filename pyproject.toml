@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "cybersec-toolkit"
+version = "1.0.0"
+description = "A comprehensive cybersecurity utility for modern-day security tasks"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+cybersec = "cybersec_toolkit.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cybersec_toolkit*"]
