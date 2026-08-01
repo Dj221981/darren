@@ -87,21 +87,7 @@ class FakeText:
 
 @pytest.fixture(autouse=True)
 def patch_cli(monkeypatch):
-    original = {
-        "console": main.console,
-        "Prompt": main.Prompt,
-        "Confirm": main.Confirm,
-        "IntPrompt": main.IntPrompt,
-        "Progress": main.Progress,
-        "Table": main.Table,
-        "Rule": main.Rule,
-        "Panel": main.Panel,
-        "Text": main.Text,
-        "version": main.__version__,
-    }
-
-    dummy_console = DummyConsole()
-    monkeypatch.setattr(main, "console", dummy_console)
+    monkeypatch.setattr(main, "console", DummyConsole())
     monkeypatch.setattr(main, "Prompt", DummyPrompt)
     monkeypatch.setattr(main, "Confirm", DummyConfirm)
     monkeypatch.setattr(main, "IntPrompt", DummyIntPrompt)
@@ -115,11 +101,6 @@ def patch_cli(monkeypatch):
     DummyPrompt.responses = []
     DummyConfirm.responses = []
     DummyIntPrompt.responses = []
-
-    yield
-
-    for key, value in original.items():
-        setattr(main, key if key != "version" else "__version__", value)
 
 
 class TestCliHelpers:
@@ -149,6 +130,35 @@ class TestCliHelpers:
         main.main()
         assert main.show_banner.called
         assert main.show_main_menu.called
+
+    def test_main_handles_keyboard_interrupt_in_handler(self, monkeypatch):
+        DummyPrompt.responses = ["1", "0"]
+        monkeypatch.setattr(main, "show_banner", Mock())
+        monkeypatch.setattr(main, "show_main_menu", Mock())
+        monkeypatch.setattr(main, "menu_password_analyzer", Mock(side_effect=KeyboardInterrupt))
+        main.main()
+        assert main.menu_password_analyzer.called
+
+    def test_menu_password_analyzer_shows_strength_output(self, monkeypatch):
+        DummyPrompt.responses = ["hunter2"]
+        monkeypatch.setattr(main.password_analyzer, "analyze_password", lambda password: SimpleNamespace(
+            strength="Strong",
+            percentage=88,
+            entropy_bits=75.2,
+            criteria={
+                "length": {"value": 7, "score": 20, "max": 20},
+                "variety": {"lowercase": True, "uppercase": False, "digits": True, "special": False, "score": 20, "max": 20},
+                "entropy": {"bits": 75.2, "score": 15, "max": 15},
+                "patterns": {"score": 10, "max": 10},
+                "common": {"is_common": False, "score": 10, "max": 10},
+            },
+            issues=[],
+            suggestions=[]
+        ))
+        main.menu_password_analyzer()
+        output = " ".join(str(call.args[0]) for call in main.console.print.call_args_list)
+        assert "Strength:" in output
+        assert "Entropy:" in output
 
     def test_menu_password_generator_random_path(self, monkeypatch):
         DummyPrompt.responses = ["1"]
@@ -187,6 +197,13 @@ class TestCliHelpers:
         output = " ".join(str(call.args[0]) for call in main.console.print.call_args_list)
         assert "Error: missing" in output
 
+    def test_menu_file_integrity_verify_missing_file_is_reported(self, monkeypatch):
+        DummyPrompt.responses = ["2", "manifest.json"]
+        monkeypatch.setattr(main.file_integrity, "verify_manifest", lambda manifest: (_ for _ in ()).throw(FileNotFoundError("manifest missing")))
+        main.menu_file_integrity()
+        output = " ".join(str(call.args[0]) for call in main.console.print.call_args_list)
+        assert "Error: manifest missing" in output
+
     def test_menu_port_scanner_handles_error(self, monkeypatch):
         DummyPrompt.responses = ["example.com", "common", "1.0"]
         DummyConfirm.responses = [False]
@@ -195,9 +212,35 @@ class TestCliHelpers:
         output = " ".join(str(call.args[0]) for call in main.console.print.call_args_list)
         assert "Error: boom" in output
 
+    def test_menu_port_scanner_custom_ports_filters_non_digits(self, monkeypatch):
+        DummyPrompt.responses = ["example.com", "custom", "22,80,abc,443", "1.0"]
+        DummyConfirm.responses = [False]
+        captured = {}
+
+        def fake_scan(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(error=None, target="example.com", target_ip="1.2.3.4", ports_scanned=3, open_ports=[], duration_seconds=0.2)
+
+        monkeypatch.setattr(main.port_scanner, "scan", fake_scan)
+        main.menu_port_scanner()
+        assert captured["ports"] == [22, 80, 443]
+
+    def test_menu_cipher_tools_hex_encode_path(self, monkeypatch):
+        DummyPrompt.responses = ["7", "encode", "hello"]
+        monkeypatch.setattr(main.cipher_tools, "to_hex", lambda text: "68656c6c6f")
+        main.menu_cipher_tools()
+        output = " ".join(str(call.args[0]) for call in main.console.print.call_args_list)
+        assert "68656c6c6f" in output
+
+    def test_menu_network_tools_dns_error_is_reported(self, monkeypatch):
+        DummyPrompt.responses = ["1", "example.com"]
+        monkeypatch.setattr(main.network_tools, "dns_lookup", lambda host: {"error": "dns failed", "forward_records": [], "reverse_records": []})
+        main.menu_network_tools()
+        output = " ".join(str(call.args[0]) for call in main.console.print.call_args_list)
+        assert "Error: dns failed" in output
+
     def test_show_main_menu_rejects_non_numeric_keys_is_currently_unsafe(self):
         main.MENU_ITEMS.append(("x", "Bad", "bad"))
         with pytest.raises(ValueError):
             main.show_main_menu()
         main.MENU_ITEMS.pop()
-
