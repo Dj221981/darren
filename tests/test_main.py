@@ -1,7 +1,9 @@
-"""Tests for cybersec_toolkit.main CLI helpers."""
+"""Tests for cybersec_toolkit.main CLI helpers and hardening paths."""
 
 from types import SimpleNamespace
 from unittest.mock import Mock
+
+import pytest
 
 import cybersec_toolkit.main as main
 
@@ -83,42 +85,44 @@ class FakeText:
         self.parts.append((text, style))
 
 
+@pytest.fixture(autouse=True)
+def patch_cli(monkeypatch):
+    original = {
+        "console": main.console,
+        "Prompt": main.Prompt,
+        "Confirm": main.Confirm,
+        "IntPrompt": main.IntPrompt,
+        "Progress": main.Progress,
+        "Table": main.Table,
+        "Rule": main.Rule,
+        "Panel": main.Panel,
+        "Text": main.Text,
+        "version": main.__version__,
+    }
+
+    dummy_console = DummyConsole()
+    monkeypatch.setattr(main, "console", dummy_console)
+    monkeypatch.setattr(main, "Prompt", DummyPrompt)
+    monkeypatch.setattr(main, "Confirm", DummyConfirm)
+    monkeypatch.setattr(main, "IntPrompt", DummyIntPrompt)
+    monkeypatch.setattr(main, "Progress", DummyProgress)
+    monkeypatch.setattr(main, "Table", FakeTable)
+    monkeypatch.setattr(main, "Rule", FakeRule)
+    monkeypatch.setattr(main, "Panel", FakePanel)
+    monkeypatch.setattr(main, "Text", FakeText)
+    monkeypatch.setattr(main, "__version__", "1.0.0")
+
+    DummyPrompt.responses = []
+    DummyConfirm.responses = []
+    DummyIntPrompt.responses = []
+
+    yield
+
+    for key, value in original.items():
+        setattr(main, key if key != "version" else "__version__", value)
+
+
 class TestCliHelpers:
-    def setup_method(self):
-        self._orig_console = main.console
-        self._orig_prompt = main.Prompt
-        self._orig_confirm = main.Confirm
-        self._orig_intprompt = main.IntPrompt
-        self._orig_progress = main.Progress
-        self._orig_table = main.Table
-        self._orig_rule = main.Rule
-        self._orig_panel = main.Panel
-        self._orig_text = main.Text
-        self._orig_version = main.__version__
-
-        main.console = DummyConsole()
-        main.Prompt = DummyPrompt
-        main.Confirm = DummyConfirm
-        main.IntPrompt = DummyIntPrompt
-        main.Progress = DummyProgress
-        main.Table = FakeTable
-        main.Rule = FakeRule
-        main.Panel = FakePanel
-        main.Text = FakeText
-        main.__version__ = "1.0.0"
-
-    def teardown_method(self):
-        main.console = self._orig_console
-        main.Prompt = self._orig_prompt
-        main.Confirm = self._orig_confirm
-        main.IntPrompt = self._orig_intprompt
-        main.Progress = self._orig_progress
-        main.Table = self._orig_table
-        main.Rule = self._orig_rule
-        main.Panel = self._orig_panel
-        main.Text = self._orig_text
-        main.__version__ = self._orig_version
-
     def test_show_main_menu_uses_menu_items(self):
         main.show_main_menu()
         assert main.console.print.call_count >= 1
@@ -158,12 +162,30 @@ class TestCliHelpers:
         output = " ".join(str(call.args[0]) for call in main.console.print.call_args_list)
         assert "Generated password" in output
 
+    def test_menu_password_generator_invalid_config_is_reported(self, monkeypatch):
+        DummyPrompt.responses = ["1"]
+        DummyIntPrompt.responses = [12]
+        DummyConfirm.responses = [True, True, True, True, False]
+        monkeypatch.setattr(main.password_generator, "GeneratorConfig", lambda **kwargs: SimpleNamespace(**kwargs))
+        monkeypatch.setattr(main.password_generator, "generate_password", lambda cfg: (_ for _ in ()).throw(ValueError("bad config")))
+
+        main.menu_password_generator()
+        output = " ".join(str(call.args[0]) for call in main.console.print.call_args_list)
+        assert "Error: bad config" in output
+
     def test_menu_hash_tools_verify_branch(self, monkeypatch):
         DummyPrompt.responses = ["3", "hello", "deadbeef", "sha256"]
         monkeypatch.setattr(main.hash_tools, "verify_hash", lambda text, expected, algo: True)
         main.menu_hash_tools()
         output = " ".join(str(call.args[0]) for call in main.console.print.call_args_list)
         assert "Hash matches" in output
+
+    def test_menu_hash_tools_file_error_is_reported(self, monkeypatch):
+        DummyPrompt.responses = ["4", "/missing.txt", "sha256"]
+        monkeypatch.setattr(main.hash_tools, "hash_file", lambda path, algo: (_ for _ in ()).throw(FileNotFoundError("missing")))
+        main.menu_hash_tools()
+        output = " ".join(str(call.args[0]) for call in main.console.print.call_args_list)
+        assert "Error: missing" in output
 
     def test_menu_port_scanner_handles_error(self, monkeypatch):
         DummyPrompt.responses = ["example.com", "common", "1.0"]
@@ -172,4 +194,10 @@ class TestCliHelpers:
         main.menu_port_scanner()
         output = " ".join(str(call.args[0]) for call in main.console.print.call_args_list)
         assert "Error: boom" in output
+
+    def test_show_main_menu_rejects_non_numeric_keys_is_currently_unsafe(self):
+        main.MENU_ITEMS.append(("x", "Bad", "bad"))
+        with pytest.raises(ValueError):
+            main.show_main_menu()
+        main.MENU_ITEMS.pop()
 
